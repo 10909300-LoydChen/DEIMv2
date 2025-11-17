@@ -129,49 +129,46 @@ def evaluate(model: torch.nn.Module, criterion: torch.nn.Module, postprocessor, 
     coco_evaluator.cleanup()
 
     metric_logger = MetricLogger(delimiter="  ")
-    # metric_logger.add_meter('class_error', SmoothedValue(window_size=1, fmt='{value:.2f}'))
     header = 'Test:'
-
-    # iou_types = tuple(k for k in ('segm', 'bbox') if k in postprocessor.keys())
     iou_types = coco_evaluator.iou_types
-    # coco_evaluator = CocoEvaluator(base_ds, iou_types)
-    # coco_evaluator.coco_eval[iou_types[0]].params.iouThrs = [0, 0.1, 0.5, 0.75]
 
+    local_predictions = []
     for samples, targets in metric_logger.log_every(data_loader, 10, header):
         samples = samples.to(device)
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
 
         outputs = model(samples)
-
         orig_target_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
-
         results = postprocessor(outputs, orig_target_sizes)
 
-        # if 'segm' in postprocessor.keys():
-        #     target_sizes = torch.stack([t["size"] for t in targets], dim=0)
-        #     results = postprocessor['segm'](results, outputs, orig_target_sizes, target_sizes)
-
         res = {target['image_id'].item(): output for target, output in zip(targets, results)}
-        if coco_evaluator is not None:
-            coco_evaluator.update(res)
+        local_predictions.append(res)
+
+    # gather predictions from all processes
+    all_process_predictions = dist_utils.all_gather(local_predictions)
 
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
-    print("Averaged stats:", metric_logger)
-    if coco_evaluator is not None:
-        coco_evaluator.synchronize_between_processes()
-
-    # accumulate predictions from all images
-    if coco_evaluator is not None:
-        coco_evaluator.accumulate()
-        coco_evaluator.summarize()
+    if dist_utils.is_main_process():
+        print("Averaged stats:", metric_logger)
 
     stats = {}
-    # stats = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
-    if coco_evaluator is not None:
-        if 'bbox' in iou_types:
-            stats['coco_eval_bbox'] = coco_evaluator.coco_eval['bbox'].stats.tolist()
-        if 'segm' in iou_types:
-            stats['coco_eval_masks'] = coco_evaluator.coco_eval['segm'].stats.tolist()
+    if dist_utils.is_main_process():
+        merged_predictions = {}
+        for predictions_from_one_process in all_process_predictions:
+            for batch_predictions in predictions_from_one_process:
+                merged_predictions.update(batch_predictions)
+
+        if coco_evaluator is not None:
+            coco_evaluator.update(merged_predictions)
+            coco_evaluator.accumulate()
+            coco_evaluator.summarize()
+            if 'bbox' in iou_types:
+                stats['coco_eval_bbox'] = coco_evaluator.coco_eval['bbox'].stats.tolist()
+            if 'segm' in iou_types:
+                stats['coco_eval_masks'] = coco_evaluator.coco_eval['segm'].stats.tolist()
+
+    if dist_utils.is_dist_available_and_initialized():
+        torch.distributed.barrier()
 
     return stats, coco_evaluator
