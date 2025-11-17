@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.distributed as dist
 
 from datetime import datetime
 from pathlib import Path
@@ -153,12 +154,32 @@ class BaseSolver(object):
 
     def load_resume_state(self, path: str):
         """Load resume"""
-        if path.startswith('http'):
-            state = torch.hub.load_state_dict_from_url(path, map_location='cpu')
-        else:
-            state = torch.load(path, map_location='cpu')
+        is_distributed = dist_utils.is_dist_available_and_initialized()
 
-        # state['model'] = remove_module_prefix(state['model'])
+        # This list must be created on all processes before the broadcast.
+        state_list = [None]
+
+        if dist_utils.is_main_process():
+            try:
+                if path.startswith('http'):
+                    state = torch.hub.load_state_dict_from_url(path, map_location='cpu')
+                else:
+                    state = torch.load(path, map_location='cpu', weights_only=True)
+
+                state_list[0] = state
+            except Exception as e:
+                print(f"Rank 0: Error loading checkpoint {path}. Error: {e}")
+                # state_list[0] remains None
+
+        if is_distributed:
+            dist.broadcast_object_list(state_list, src=0)
+            dist.barrier()
+
+        state = state_list[0]
+
+        if state is None:
+            raise FileNotFoundError(f"Checkpoint not found or failed to load by Rank 0: {path}")
+
         self.load_state_dict(state)
 
     def load_tuning_state(self, path: str):
