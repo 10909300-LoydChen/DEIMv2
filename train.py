@@ -47,8 +47,7 @@ def main(args, ) -> None:
         if 'HGNetv2' in cfg.yaml_cfg:
             cfg.yaml_cfg['HGNetv2']['pretrained'] = False
 
-    if dist_utils.is_main_process():
-        print('cfg: ', cfg.__dict__)
+    print('cfg: ', cfg.__dict__)
 
     solver = TASKS[cfg.yaml_cfg['task']](cfg)
 

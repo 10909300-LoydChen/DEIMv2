@@ -135,7 +135,7 @@ def warp_model(
 ):
     if is_dist_available_and_initialized():
         rank = get_rank()
-        model = nn.SyncBatchNorm.convert_sync_batchnorm(model)
+        model = nn.SyncBatchNorm.convert_sync_batchnorm(model) if sync_bn else model
         if dist_mode == 'dp':
             model = DP(model, device_ids=[rank], output_device=rank)
         elif dist_mode == 'ddp':
@@ -154,11 +154,10 @@ def de_model(model):
 
 def warp_loader(loader, shuffle=False):
     if is_dist_available_and_initialized():
-        sampler = DistributedSampler(loader.dataset, shuffle=shuffle, seed=0)
+        sampler = DistributedSampler(loader.dataset, shuffle=shuffle)
         loader = DataLoader(loader.dataset,
                             loader.batch_size,
                             sampler=sampler,
-                            shuffle=False,
                             drop_last=loader.drop_last,
                             collate_fn=loader.collate_fn,
                             pin_memory=loader.pin_memory,
