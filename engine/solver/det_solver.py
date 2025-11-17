@@ -77,6 +77,7 @@ class DetSolver(BaseSolver):
 
             self.train_dataloader.set_epoch(epoch)
             # self.train_dataloader.dataset.set_epoch(epoch)
+            # [JULES] This is the required call to set_epoch for the DistributedSampler.
             if dist_utils.is_dist_available_and_initialized():
                 self.train_dataloader.sampler.set_epoch(epoch)
 
@@ -110,6 +111,8 @@ class DetSolver(BaseSolver):
             self.last_epoch += 1
 
             if self.output_dir and epoch < self.train_dataloader.collate_fn.stop_epoch:
+                if dist_utils.is_dist_available_and_initialized():
+                    torch.distributed.barrier()
                 checkpoint_paths = [self.output_dir / 'last.pth']
                 # extra checkpoint before LR drop and every 100 epochs
                 if (epoch + 1) % args.checkpoint_freq == 0:
@@ -143,6 +146,8 @@ class DetSolver(BaseSolver):
                     best_stat_print['epoch'] = epoch
                     top1 = best_stat[k]
                     if self.output_dir:
+                        if dist_utils.is_dist_available_and_initialized():
+                            torch.distributed.barrier()
                         if epoch >= self.train_dataloader.collate_fn.stop_epoch:
                             dist_utils.save_on_master(self.state_dict(), self.output_dir / 'best_stg2.pth')
                         else:
@@ -156,9 +161,13 @@ class DetSolver(BaseSolver):
                     if epoch >= self.train_dataloader.collate_fn.stop_epoch:
                         if test_stats[k][0] > top1:
                             top1 = test_stats[k][0]
+                            if dist_utils.is_dist_available_and_initialized():
+                                torch.distributed.barrier()
                             dist_utils.save_on_master(self.state_dict(), self.output_dir / 'best_stg2.pth')
                     else:
                         top1 = max(test_stats[k][0], top1)
+                        if dist_utils.is_dist_available_and_initialized():
+                            torch.distributed.barrier()
                         dist_utils.save_on_master(self.state_dict(), self.output_dir / 'best_stg1.pth')
 
                 elif epoch >= self.train_dataloader.collate_fn.stop_epoch:
