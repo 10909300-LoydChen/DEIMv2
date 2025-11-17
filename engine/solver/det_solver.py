@@ -77,6 +77,7 @@ class DetSolver(BaseSolver):
 
             self.train_dataloader.set_epoch(epoch)
             # self.train_dataloader.dataset.set_epoch(epoch)
+            # [JULES] This is the required call to set_epoch for the DistributedSampler.
             if dist_utils.is_dist_available_and_initialized():
                 self.train_dataloader.sampler.set_epoch(epoch)
 
